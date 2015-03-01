@@ -48,6 +48,7 @@
 #include "materials/materialFeatureData.h"
 #include "materials/materialFeatureTypes.h"
 #include "console/engineAPI.h"
+#include "T3D/accumulationVolume.h"
 
 using namespace Torque;
 
@@ -111,6 +112,11 @@ TSStatic::TSStatic()
    mMeshCulling = false;
    mUseOriginSort = false;
 
+   mUseAlphaFade     = false;
+   mAlphaFadeStart   = 100.0f;
+   mAlphaFadeEnd     = 150.0f;
+   mInvertAlphaFade  = false;
+   mAlphaFade = 1.0f;
    mPhysicsRep = NULL;
 
    mCollisionType = CollisionMesh;
@@ -191,6 +197,13 @@ void TSStatic::initPersistFields()
          "When set to false, the slightest bump will stop the player from walking on top of the object.\n");
    
    endGroup("Collision");
+
+   addGroup( "AlphaFade" );  
+      addField( "alphaFadeEnable",   TypeBool,   Offset(mUseAlphaFade,    TSStatic), "Turn on/off Alpha Fade" );  
+      addField( "alphaFadeStart",    TypeF32,    Offset(mAlphaFadeStart,  TSStatic), "Distance of start Alpha Fade" );  
+      addField( "alphaFadeEnd",      TypeF32,    Offset(mAlphaFadeEnd,    TSStatic), "Distance of end Alpha Fade" );  
+      addField( "alphaFadeInverse", TypeBool,    Offset(mInvertAlphaFade, TSStatic), "Invert Alpha Fade's Start & End Distance" );  
+   endGroup( "AlphaFade" );
 
    addGroup("Debug");
 
@@ -281,6 +294,13 @@ bool TSStatic::onAdd()
 
    _updateShouldTick();
 
+   // Accumulation
+   if ( isClientObject() && mShapeInstance )
+   {
+      if ( mShapeInstance->hasAccumulation() ) 
+         AccumulationVolume::addObject(this);
+   }
+
    return true;
 }
 
@@ -314,7 +334,7 @@ bool TSStatic::_createShape()
          NetConnection::filesWereDownloaded() )
       return false;
 
-   mObjBox = mShape->bounds;
+   mObjBox = mShape->mBounds;
    resetWorldBox();
 
    mShapeInstance = new TSShapeInstance( mShape, isClientObject() );
@@ -371,7 +391,7 @@ void TSStatic::_updatePhysics()
    if ( mCollisionType == Bounds )
    {
       MatrixF offset( true );
-      offset.setPosition( mShape->center );
+      offset.setPosition( mShape->mCenter );
       colShape = PHYSICSMGR->createCollision();
       colShape->addBox( getObjBox().getExtents() * 0.5f * mObjScale, offset );         
    }
@@ -390,6 +410,13 @@ void TSStatic::_updatePhysics()
 void TSStatic::onRemove()
 {
    SAFE_DELETE( mPhysicsRep );
+
+   // Accumulation
+   if ( isClientObject() && mShapeInstance )
+   {
+      if ( mShapeInstance->hasAccumulation() ) 
+         AccumulationVolume::removeObject(this);
+   }
 
    mConvexList->nukeList();
 
@@ -502,6 +529,36 @@ void TSStatic::prepRenderImage( SceneRenderState* state )
    if (dist < 0.01f)
       dist = 0.01f;
 
+   if (mUseAlphaFade)
+   {
+      mAlphaFade = 1.0f;
+      if ((mAlphaFadeStart < mAlphaFadeEnd) && mAlphaFadeStart > 0.1f)
+      {
+         if (mInvertAlphaFade)
+         {
+            if (dist <= mAlphaFadeStart)
+            {
+               return;
+            }
+            if (dist < mAlphaFadeEnd)
+            {
+               mAlphaFade = ((dist - mAlphaFadeStart) / (mAlphaFadeEnd - mAlphaFadeStart));
+            }
+         }
+         else
+         {
+            if (dist >= mAlphaFadeEnd)
+            {
+               return;
+            }
+            if (dist > mAlphaFadeStart)
+            {
+               mAlphaFade -= ((dist - mAlphaFadeStart) / (mAlphaFadeEnd - mAlphaFadeStart));
+            }
+         }
+      }
+   }
+
    F32 invScale = (1.0f/getMax(getMax(mObjScale.x,mObjScale.y),mObjScale.z));   
 
    if ( mForceDetail == -1 )
@@ -519,6 +576,9 @@ void TSStatic::prepRenderImage( SceneRenderState* state )
    rdata.setSceneState( state );
    rdata.setFadeOverride( 1.0f );
    rdata.setOriginSort( mUseOriginSort );
+
+   // Acculumation
+   rdata.setAccuTex(mAccuTex);
 
    // If we have submesh culling enabled then prepare
    // the object space frustum to pass to the shape.
@@ -545,6 +605,19 @@ void TSStatic::prepRenderImage( SceneRenderState* state )
    GFX->setWorldMatrix( mat );
 
    mShapeInstance->animate();
+   if(mShapeInstance)
+   {
+      if (mUseAlphaFade)
+      {
+         mShapeInstance->setAlphaAlways(mAlphaFade);
+         S32 s = mShapeInstance->mMeshObjects.size();
+         
+         for(S32 x = 0; x < s; x++)
+         {
+            mShapeInstance->mMeshObjects[x].visible = mAlphaFade;
+         }
+      }
+   }
    mShapeInstance->render( rdata );
 
    if ( mRenderNormalScalar > 0 )
@@ -594,6 +667,13 @@ void TSStatic::setTransform(const MatrixF & mat)
    if ( mPhysicsRep )
       mPhysicsRep->setTransform( mat );
 
+   // Accumulation
+   if ( isClientObject() && mShapeInstance )
+   {
+      if ( mShapeInstance->hasAccumulation() ) 
+         AccumulationVolume::updateObject(this);
+   }
+
    // Since this is a static it's render transform changes 1
    // to 1 with it's collision transform... no interpolation.
    setRenderTransform(mat);
@@ -624,6 +704,13 @@ U32 TSStatic::packUpdate(NetConnection *con, U32 mask, BitStream *stream)
    stream->write( mForceDetail );
 
    stream->writeFlag( mPlayAmbient );
+
+   if ( stream->writeFlag(mUseAlphaFade) )  
+   {  
+      stream->write(mAlphaFadeStart);  
+      stream->write(mAlphaFadeEnd);  
+      stream->write(mInvertAlphaFade);  
+   } 
 
    if ( mLightPlugin )
       retMask |= mLightPlugin->packUpdate(this, AdvancedStaticOptionsMask, con, mask, stream);
@@ -681,6 +768,14 @@ void TSStatic::unpackUpdate(NetConnection *con, BitStream *stream)
    stream->read( &mForceDetail );
 
    mPlayAmbient = stream->readFlag();
+
+   mUseAlphaFade = stream->readFlag();  
+   if (mUseAlphaFade)
+   {
+      stream->read(&mAlphaFadeStart);  
+      stream->read(&mAlphaFadeEnd);  
+      stream->read(&mInvertAlphaFade);  
+   }
 
    if ( mLightPlugin )
    {
@@ -865,31 +960,31 @@ void TSStatic::buildConvex(const Box3F& box, Convex* convex)
 SceneObject* TSStaticPolysoupConvex::smCurObject = NULL;
 
 TSStaticPolysoupConvex::TSStaticPolysoupConvex()
-:  box( 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f ),
-   normal( 0.0f, 0.0f, 0.0f, 0.0f ),
-   idx( 0 ),
-   mesh( NULL )
+:  mBox( 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f ),
+   mNormal( 0.0f, 0.0f, 0.0f, 0.0f ),
+   mIdx( 0 ),
+   mMesh( NULL )
 {
    mType = TSPolysoupConvexType;
 
    for ( U32 i = 0; i < 4; ++i )
    {
-      verts[i].set( 0.0f, 0.0f, 0.0f );
+      mVerts[i].set( 0.0f, 0.0f, 0.0f );
    }
 }
 
 Point3F TSStaticPolysoupConvex::support(const VectorF& vec) const
 {
-   F32 bestDot = mDot( verts[0], vec );
+   F32 bestDot = mDot( mVerts[0], vec );
 
-   const Point3F *bestP = &verts[0];
+   const Point3F *bestP = &mVerts[0];
    for(S32 i=1; i<4; i++)
    {
-      F32 newD = mDot(verts[i], vec);
+      F32 newD = mDot(mVerts[i], vec);
       if(newD > bestDot)
       {
          bestDot = newD;
-         bestP = &verts[i];
+         bestP = &mVerts[i];
       }
    }
 
@@ -898,7 +993,7 @@ Point3F TSStaticPolysoupConvex::support(const VectorF& vec) const
 
 Box3F TSStaticPolysoupConvex::getBoundingBox() const
 {
-   Box3F wbox = box;
+   Box3F wbox = mBox;
    wbox.minExtents.convolve( mObject->getScale() );
    wbox.maxExtents.convolve( mObject->getScale() );
    mObject->getTransform().mul(wbox);
@@ -908,7 +1003,7 @@ Box3F TSStaticPolysoupConvex::getBoundingBox() const
 Box3F TSStaticPolysoupConvex::getBoundingBox(const MatrixF& mat, const Point3F& scale) const
 {
    AssertISV(false, "TSStaticPolysoupConvex::getBoundingBox(m,p) - Not implemented. -- XEA");
-   return box;
+   return mBox;
 }
 
 void TSStaticPolysoupConvex::getPolyList(AbstractPolyList *list)
@@ -920,11 +1015,11 @@ void TSStaticPolysoupConvex::getPolyList(AbstractPolyList *list)
    list->setObject(mObject);
 
    // Add only the original collision triangle
-   S32 base =  list->addPoint(verts[0]);
-               list->addPoint(verts[2]);
-               list->addPoint(verts[1]);
+   S32 base =  list->addPoint(mVerts[0]);
+               list->addPoint(mVerts[2]);
+               list->addPoint(mVerts[1]);
 
-   list->begin(0, (U32)idx ^ (U32)mesh);
+   list->begin(0, (U32)mIdx ^ (uintptr_t)mMesh);
    list->vertex(base + 2);
    list->vertex(base + 1);
    list->vertex(base + 0);
@@ -940,10 +1035,10 @@ void TSStaticPolysoupConvex::getFeatures(const MatrixF& mat,const VectorF& n, Co
    // For a tetrahedron this is pretty easy... first
    // convert everything into world space.
    Point3F tverts[4];
-   mat.mulP(verts[0], &tverts[0]);
-   mat.mulP(verts[1], &tverts[1]);
-   mat.mulP(verts[2], &tverts[2]);
-   mat.mulP(verts[3], &tverts[3]);
+   mat.mulP(mVerts[0], &tverts[0]);
+   mat.mulP(mVerts[1], &tverts[1]);
+   mat.mulP(mVerts[2], &tverts[2]);
+   mat.mulP(mVerts[3], &tverts[3]);
 
    // points...
    S32 firstVert = cf->mVertexList.size();
@@ -1077,7 +1172,7 @@ DefineEngineMethod( TSStatic, changeMaterial, void, ( const char* mapTo, Materia
    }
 
    // Check the mapTo name exists for this shape
-   S32 matIndex = object->getShape()->materialList->getMaterialNameList().find_next(String(mapTo));
+   S32 matIndex = object->getShape()->mMaterialList->getMaterialNameList().find_next(String(mapTo));
    if (matIndex < 0)
    {
       Con::errorf("TSShape::changeMaterial failed: Invalid mapTo name '%s'", mapTo);
@@ -1095,13 +1190,13 @@ DefineEngineMethod( TSStatic, changeMaterial, void, ( const char* mapTo, Materia
 
    // Replace instances with the new material being traded in. Lets make sure that we only
    // target the specific targets per inst, this is actually doing more than we thought
-   delete object->getShape()->materialList->mMatInstList[matIndex];
-   object->getShape()->materialList->mMatInstList[matIndex] = newMat->createMatInstance();
+   delete object->getShape()->mMaterialList->mMatInstList[matIndex];
+   object->getShape()->mMaterialList->mMatInstList[matIndex] = newMat->createMatInstance();
 
    // Finish up preparing the material instances for rendering
    const GFXVertexFormat *flags = getGFXVertexFormat<GFXVertexPNTTB>();
    FeatureSet features = MATMGR->getDefaultFeatures();
-   object->getShape()->materialList->getMaterialInst(matIndex)->init( features, flags );
+   object->getShape()->mMaterialList->getMaterialInst(matIndex)->init( features, flags );
 }
 
 DefineEngineMethod( TSStatic, getModelFile, const char *, (),,

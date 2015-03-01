@@ -25,6 +25,7 @@
 
 #include "core/frameAllocator.h"
 #include "console/console.h"
+#include "console/engineAPI.h"
 #include "core/stringTable.h"
 #include "console/consoleInternal.h"
 #include "console/ast.h"
@@ -112,24 +113,25 @@ MODULE_END;
 // BRKCLR file line - sent when a breakpoint cannot be moved to a breakable line on the client.
 //
 
-
-ConsoleFunction( dbgSetParameters, void, 3, 4, "(int port, string password, bool waitForClient)"
+DefineConsoleFunction( dbgSetParameters, void, (S32 port, const char * password, bool waitForClient ), (false), "( int port, string password, bool waitForClient )"
                 "Open a debug server port on the specified port, requiring the specified password, "
 				"and optionally waiting for the debug client to connect.\n"
 				"@internal Primarily used for Torsion and other debugging tools")
 {
    if (TelDebugger)
-	   TelDebugger->setDebugParameters(dAtoi(argv[1]), argv[2], argc > 3 ? dAtob(argv[3]) : false );
+   {
+      TelDebugger->setDebugParameters(port, password, waitForClient );
+   }
 }
 
-ConsoleFunction( dbgIsConnected, bool, 1, 1, "()"
+DefineConsoleFunction( dbgIsConnected, bool, (), , "()"
                 "Returns true if a script debugging client is connected else return false.\n"
 				"@internal Primarily used for Torsion and other debugging tools")
 {
    return TelDebugger && TelDebugger->isConnected();
 }
 
-ConsoleFunction( dbgDisconnect, void, 1, 1, "()"
+DefineConsoleFunction( dbgDisconnect, void, (), , "()"
                 "Forcibly disconnects any attached script debugging client.\n"
 				"@internal Primarily used for Torsion and other debugging tools")
 {
@@ -382,7 +384,7 @@ void TelnetDebugger::executionStopped(CodeBlock *code, U32 lineNumber)
       return;
    }
 
-   Breakpoint **bp = findBreakpoint(code->name, lineNumber);
+   Breakpoint **bp = findBreakpoint(code->mName, lineNumber);
    if(!bp)
       return;
    
@@ -396,7 +398,7 @@ void TelnetDebugger::executionStopped(CodeBlock *code, U32 lineNumber)
       {
          brk->curCount = 0;
          if(brk->clearOnHit)
-            removeBreakpoint(code->name, lineNumber);
+            removeBreakpoint(code->mName, lineNumber);
          breakProcess();
       }
    }
@@ -455,8 +457,8 @@ void TelnetDebugger::sendBreak()
    {
       CodeBlock *code = gEvalState.stack[i]->code;
       const char *file = "<none>";
-      if (code && code->name && code->name[0])
-         file = code->name;
+      if (code && code->mName && code->mName[0])
+         file = code->mName;
 
       Namespace *ns = gEvalState.stack[i]->scopeNamespace;
       scope[0] = 0;
@@ -580,7 +582,7 @@ void TelnetDebugger::addAllBreakpoints(CodeBlock *code)
    {
       // TODO: This assumes that the OS file names are case 
       // insensitive... Torque needs a dFilenameCmp() function.
-      if( dStricmp( cur->fileName, code->name ) == 0 )
+      if( dStricmp( cur->fileName, code->mName ) == 0 )
 	   {
          cur->code = code;
 
@@ -774,7 +776,7 @@ void TelnetDebugger::setBreakOnNextStatement( bool enabled )
    if ( enabled )
    {
       // Apply breaks on all the code blocks.
-      for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->nextFile)
+      for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->mNextFile)
          walk->setAllBreaks();
       mBreakOnNextStatement = true;
    } 
@@ -782,7 +784,7 @@ void TelnetDebugger::setBreakOnNextStatement( bool enabled )
    {
       // Clear all the breaks on the codeblocks 
       // then go reapply the breakpoints.
-      for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->nextFile)
+      for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->mNextFile)
          walk->clearAllBreaks();
       for(Breakpoint *w = mBreakpoints; w; w = w->next)
 	  {
@@ -878,10 +880,10 @@ void TelnetDebugger::evaluateExpression(const char *tag, S32 frame, const char *
 void TelnetDebugger::dumpFileList()
 {
    send("FILELISTOUT ");
-   for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->nextFile)
+   for(CodeBlock *walk = CodeBlock::getCodeBlockList(); walk; walk = walk->mNextFile)
    {
-      send(walk->name);
-      if(walk->nextFile)
+      send(walk->mName);
+      if(walk->mNextFile)
          send(" ");
    }
    send("\r\n");
@@ -894,11 +896,11 @@ void TelnetDebugger::dumpBreakableList(const char *fileName)
    char buffer[MaxCommandSize];
    if(file)
    {
-      dSprintf(buffer, MaxCommandSize, "BREAKLISTOUT %s %d", fileName, file->breakListSize >> 1);
+      dSprintf(buffer, MaxCommandSize, "BREAKLISTOUT %s %d", fileName, file->mBreakListSize >> 1);
       send(buffer);
-      for(U32 i = 0; i < file->breakListSize; i += 2)
+      for(U32 i = 0; i < file->mBreakListSize; i += 2)
       {
-         dSprintf(buffer, MaxCommandSize, " %d %d", file->breakList[i], file->breakList[i+1]);
+         dSprintf(buffer, MaxCommandSize, " %d %d", file->mBreakList[i], file->mBreakList[i+1]);
          send(buffer);
       }
       send("\r\n");

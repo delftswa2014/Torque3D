@@ -56,11 +56,11 @@ public:
    ~TSStaticPolysoupConvex() {};
 
 public:
-   Box3F                box;
-   Point3F              verts[4];
-   PlaneF               normal;
-   S32                  idx;
-   TSMesh               *mesh;
+   Box3F                mBox;
+   Point3F              mVerts[4];
+   PlaneF               mNormal;
+   S32                  mIdx;
+   TSMesh               *mMesh;
 
    static SceneObject* smCurObject;
 
@@ -97,6 +97,13 @@ class TSStatic : public SceneObject
    };
 
 public:
+   void setAlphaFade(bool enable, F32 start, F32 end, bool inverse)
+   {
+      mUseAlphaFade     = enable;
+      mAlphaFadeStart   = start;
+      mAlphaFadeEnd     = end;
+      mInvertAlphaFade  = inverse;
+   }
    
    /// The different types of mesh data types
    enum MeshType
@@ -108,6 +115,11 @@ public:
    };
    
 protected:
+   bool mUseAlphaFade;
+   F32  mAlphaFadeStart;
+   F32  mAlphaFadeEnd;
+   F32  mAlphaFade;
+   bool mInvertAlphaFade;
 
    bool onAdd();
    void onRemove();

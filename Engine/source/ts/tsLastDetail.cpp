@@ -39,6 +39,7 @@
 #include "materials/materialManager.h"
 #include "materials/materialFeatureTypes.h"
 #include "console/consoleTypes.h"
+#include "console/engineAPI.h"
 
 
 GFXImplementVertexFormat( ImposterState )
@@ -81,8 +82,8 @@ TSLastDetail::TSLastDetail(   TSShape *shape,
    mDl = dl;
    mDim = getMax( dim, (S32)32 );
 
-   mRadius = mShape->radius;
-   mCenter = mShape->center;
+   mRadius = mShape->mRadius;
+   mCenter = mShape->mCenter;
 
    mCachePath = cachePath;
 
@@ -542,12 +543,9 @@ void TSLastDetail::updateImposterImages( bool forceUpdate )
       GFX->endScene();
 }
 
-ConsoleFunction(tsUpdateImposterImages, void, 1, 2, "tsUpdateImposterImages( bool forceupdate )")
+DefineConsoleFunction( tsUpdateImposterImages, void, (bool forceUpdate), (false), "tsUpdateImposterImages( bool forceupdate )")
 {
-   if ( argc > 1 )
-      TSLastDetail::updateImposterImages( dAtob( argv[1] ) );
-   else
-      TSLastDetail::updateImposterImages();
+   TSLastDetail::updateImposterImages(forceUpdate);
 }
 
 
